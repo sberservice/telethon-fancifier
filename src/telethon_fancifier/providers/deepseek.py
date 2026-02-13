@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Any
 
 import httpx
 
@@ -111,7 +112,7 @@ class DeepSeekProvider:
         return None, None
 
     @staticmethod
-    def _extract_responses_content(data: dict[str, object]) -> str:
+    def _extract_responses_content(data: dict[str, Any]) -> str:
         output_text = data.get("output_text")
         if isinstance(output_text, str):
             return output_text
