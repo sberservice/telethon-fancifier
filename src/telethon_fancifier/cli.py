@@ -109,7 +109,7 @@ def main() -> None:
             load_external_plugins(registry, Path("plugins"))
 
         if args.command == "setup":
-            updated = asyncio.run(run_settings_wizard(config, registry))
+            updated = asyncio.run(run_settings_wizard(config, registry, on_change=store.save))
             store.save(updated)
             print("Настройки сохранены.")
             return
@@ -203,6 +203,16 @@ def main() -> None:
         print(f"Лог: {log_path}")
         sys.exit(2)
     except KeyboardInterrupt:
+        command = getattr(locals().get("args", None), "command", None)
+        if command in {"setup", "remove-chats"}:
+            try:
+                store_ref = locals().get("store")
+                config_ref = locals().get("config")
+                if store_ref is not None and config_ref is not None:
+                    store_ref.save(config_ref)
+                    print("Настройки сохранены (прервано пользователем).")
+            except AppError:
+                logger.exception("Не удалось сохранить настройки при прерывании")
         print("Остановлено пользователем.")
         sys.exit(130)
     except Exception:

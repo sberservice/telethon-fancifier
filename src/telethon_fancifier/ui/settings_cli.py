@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Callable
 
 from telethon import TelegramClient
 
@@ -11,6 +12,14 @@ from telethon_fancifier.core.telegram_credentials import read_telegram_credentia
 from telethon_fancifier.plugins.registry import PluginRegistry
 
 logger = logging.getLogger(__name__)
+
+
+def _notify_config_changed(
+    config: AppConfig,
+    on_change: Callable[[AppConfig], None] | None,
+) -> None:
+    if on_change is not None:
+        on_change(config)
 
 
 def merge_chat_configs(existing: list[ChatConfig], updates: list[ChatConfig]) -> list[ChatConfig]:
@@ -119,17 +128,37 @@ def _print_llm_prompts(config: AppConfig) -> None:
         print(f"  {idx}. [{marker}] {name} | temperature={prompt.temperature}")
 
 
-def run_llm_settings_wizard(config: AppConfig) -> AppConfig:
+def _resolve_prompt_name(raw_value: str, prompt_names: list[str]) -> str | None:
+    value = raw_value.strip()
+    if not value:
+        return None
+
+    if value in prompt_names:
+        return value
+
+    if value.isdigit():
+        index = int(value) - 1
+        if 0 <= index < len(prompt_names):
+            return prompt_names[index]
+
+    return None
+
+
+def run_llm_settings_wizard(
+    config: AppConfig,
+    on_change: Callable[[AppConfig], None] | None = None,
+) -> AppConfig:
     config.llm.get_active_prompt()
 
     while True:
         print("\n=== Настройки LLM ===")
         print("1. Показать prompt-профили")
         print("2. Выбрать активный prompt")
-        print("3. Создать/изменить prompt")
-        print("4. Удалить prompt")
-        print("5. Изменить модель")
-        print("6. Изменить API-стиль модели")
+        print("3. Создать prompt")
+        print("4. Изменить prompt")
+        print("5. Удалить prompt")
+        print("6. Изменить модель")
+        print("7. Изменить API-стиль модели")
         print("0. Назад")
 
         action = input("Выберите действие: ").strip()
@@ -139,10 +168,13 @@ def run_llm_settings_wizard(config: AppConfig) -> AppConfig:
 
         if action == "2":
             _print_llm_prompts(config)
-            prompt_name = input("Введите имя prompt-профиля: ").strip()
-            if prompt_name not in config.llm.prompts:
-                raise AppError(f"Prompt-профиль '{prompt_name}' не найден.")
+            prompt_names = list(config.llm.prompts.keys())
+            raw_value = input("Введите имя или номер prompt-профиля: ").strip()
+            prompt_name = _resolve_prompt_name(raw_value, prompt_names)
+            if prompt_name is None:
+                raise AppError(f"Prompt-профиль '{raw_value}' не найден.")
             config.llm.active_prompt = prompt_name
+            _notify_config_changed(config, on_change)
             print(f"Активный prompt: {prompt_name}")
             continue
 
@@ -150,13 +182,49 @@ def run_llm_settings_wizard(config: AppConfig) -> AppConfig:
             prompt_name = input("Имя prompt-профиля: ").strip()
             if not prompt_name:
                 raise AppError("Имя prompt-профиля не может быть пустым.")
+            if prompt_name in config.llm.prompts:
+                raise AppError(
+                    f"Prompt-профиль '{prompt_name}' уже существует. Используйте пункт 'Изменить prompt'."
+                )
+
+            system_prompt = input("System prompt: ").strip()
+            user_template = input("User prompt template (используйте {text}): ").strip()
+            temperature_raw = input("Temperature 0..2 (пусто = 0): ")
+
+            config.llm.prompts[prompt_name] = LlmPromptConfig(
+                system_prompt=system_prompt,
+                user_prompt_template=user_template if user_template else "{text}",
+                temperature=_read_temperature(temperature_raw, fallback=0.0),
+            )
+
+            if config.llm.active_prompt not in config.llm.prompts:
+                config.llm.active_prompt = prompt_name
+
+            _notify_config_changed(config, on_change)
+            print(f"Prompt-профиль '{prompt_name}' создан.")
+            continue
+
+        if action == "4":
+            _print_llm_prompts(config)
+            prompt_names = list(config.llm.prompts.keys())
+            raw_value = input("Введите имя или номер prompt-профиля для изменения: ").strip()
+            prompt_name = _resolve_prompt_name(raw_value, prompt_names)
+            if prompt_name is None:
+                raise AppError(f"Prompt-профиль '{raw_value}' не найден.")
 
             existing = config.llm.prompts.get(prompt_name)
-            current_system = existing.system_prompt if existing is not None else ""
-            current_user_template = (
-                existing.user_prompt_template if existing is not None else "{text}"
-            )
-            current_temp = existing.temperature if existing is not None else 0.0
+            if existing is None:
+                raise AppError(f"Prompt-профиль '{prompt_name}' не найден.")
+
+            current_system = existing.system_prompt
+            current_user_template = existing.user_prompt_template
+            current_temp = existing.temperature
+
+            print("\nТекущий system prompt:")
+            print(current_system)
+            print("\nТекущий user prompt template:")
+            print(current_user_template)
+            print(f"\nТекущая temperature: {current_temp}")
 
             system_prompt = input(
                 "System prompt (пусто = оставить текущее значение): "
@@ -177,41 +245,47 @@ def run_llm_settings_wizard(config: AppConfig) -> AppConfig:
             if config.llm.active_prompt not in config.llm.prompts:
                 config.llm.active_prompt = prompt_name
 
+            _notify_config_changed(config, on_change)
             print(f"Prompt-профиль '{prompt_name}' сохранён.")
             continue
 
-        if action == "4":
+        if action == "5":
             _print_llm_prompts(config)
-            prompt_name = input("Введите имя prompt-профиля для удаления: ").strip()
-            if prompt_name not in config.llm.prompts:
-                raise AppError(f"Prompt-профиль '{prompt_name}' не найден.")
+            prompt_names = list(config.llm.prompts.keys())
+            raw_value = input("Введите имя или номер prompt-профиля для удаления: ").strip()
+            prompt_name = _resolve_prompt_name(raw_value, prompt_names)
+            if prompt_name is None:
+                raise AppError(f"Prompt-профиль '{raw_value}' не найден.")
             if len(config.llm.prompts) == 1:
                 raise AppError("Нельзя удалить единственный prompt-профиль.")
 
             del config.llm.prompts[prompt_name]
             if config.llm.active_prompt == prompt_name:
                 config.llm.active_prompt = next(iter(config.llm.prompts.keys()))
+            _notify_config_changed(config, on_change)
             print(f"Prompt-профиль '{prompt_name}' удалён.")
             continue
 
-        if action == "5":
+        if action == "6":
             model = input("Модель (например deepseek-chat): ").strip()
             if not model:
                 raise AppError("Имя модели не может быть пустым.")
             config.llm.model = model
+            _notify_config_changed(config, on_change)
             continue
 
-        if action == "6":
+        if action == "7":
             api_style = input("API-стиль (chat_completions или responses): ").strip()
             if api_style not in {"chat_completions", "responses"}:
                 raise AppError("Доступные варианты API-стиля: chat_completions, responses.")
             config.llm.api_style = api_style
+            _notify_config_changed(config, on_change)
             continue
 
         if action == "0":
             return config
 
-        raise AppError("Неизвестное действие. Используйте 0, 1, 2, 3, 4, 5 или 6.")
+        raise AppError("Неизвестное действие. Используйте 0, 1, 2, 3, 4, 5, 6 или 7.")
 
 
 async def run_llm_test_wizard(config: AppConfig) -> AppConfig:
@@ -294,7 +368,11 @@ async def _run_add_or_edit_chats_wizard(config: AppConfig, registry: PluginRegis
     return config
 
 
-async def run_settings_wizard(config: AppConfig, registry: PluginRegistry) -> AppConfig:
+async def run_settings_wizard(
+    config: AppConfig,
+    registry: PluginRegistry,
+    on_change: Callable[[AppConfig], None] | None = None,
+) -> AppConfig:
     while True:
         print("\n=== Мастер настройки ===")
         print("1. Добавить/изменить чаты и модули")
@@ -307,15 +385,17 @@ async def run_settings_wizard(config: AppConfig, registry: PluginRegistry) -> Ap
         action = input("Выберите действие: ").strip()
         if action == "1":
             config = await _run_add_or_edit_chats_wizard(config, registry)
+            _notify_config_changed(config, on_change)
             continue
         if action == "2":
             config = run_remove_chats_wizard(config)
+            _notify_config_changed(config, on_change)
             continue
         if action == "3":
             _print_config_summary(config)
             continue
         if action == "4":
-            config = run_llm_settings_wizard(config)
+            config = run_llm_settings_wizard(config, on_change=on_change)
             continue
         if action == "5":
             config = await run_llm_test_wizard(config)
