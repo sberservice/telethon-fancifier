@@ -10,8 +10,9 @@ from telethon_fancifier.providers.deepseek import DeepSeekProvider
 
 def build_builtin_registry(config: AppConfig | None = None) -> PluginRegistry:
     registry = PluginRegistry()
-    # Don't pass llm_config so the plugin reloads config on each transform
-    registry.register(LlmRewritePlugin(provider=DeepSeekProvider(), llm_config=None))
+    # Pass llm_config if available, otherwise plugin will load from disk
+    llm_config = config.llm if config is not None else None
+    registry.register(LlmRewritePlugin(provider=DeepSeekProvider(), llm_config=llm_config))
     registry.register(RandomBoldPlugin())
     registry.register(EverySecondUpperPlugin())
     return registry

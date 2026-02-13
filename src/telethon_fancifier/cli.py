@@ -21,6 +21,7 @@ from telethon_fancifier.core.windows_startup import (
     remove_startup_task,
 )
 from telethon_fancifier.plugins import build_builtin_registry
+from telethon_fancifier.plugins.base import PluginContext
 from telethon_fancifier.plugins.loader import load_external_plugins
 from telethon_fancifier.ui.settings_cli import run_remove_chats_wizard, run_settings_wizard
 
@@ -28,7 +29,15 @@ logger = logging.getLogger(__name__)
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="telethon-fancifier")
+    parser = argparse.ArgumentParser(
+        prog="telethon-fancifier",
+        description="Telegram-демон для автоматической трансформации сообщений",
+    )
+    parser.add_argument(
+        "--portable",
+        action="store_true",
+        help="Портативный режим: использовать ./data вместо системной директории",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("setup", help="Интерактивный мастер: добавить, изменить и удалить чаты")
@@ -36,6 +45,24 @@ def _build_parser() -> argparse.ArgumentParser:
 
     run_parser = subparsers.add_parser("run", help="Запуск демона")
     run_parser.add_argument("--dry-run", action="store_true", help="Показать изменения без редактирования")
+    run_parser.add_argument("--no-hot-reload", action="store_true", help="Отключить автоматическую перезагрузку конфига")
+
+    preview_parser = subparsers.add_parser(
+        "preview",
+        help="Предпросмотр результата применения плагинов без запуска Telegram",
+    )
+    preview_parser.add_argument("--text", type=str, help="Текст для обработки")
+    preview_parser.add_argument(
+        "--chat-id",
+        type=int,
+        help="ID чата для выбора плагинов (опционально)",
+    )
+    preview_parser.add_argument(
+        "--plugins",
+        type=str,
+        nargs="*",
+        help="Список ID плагинов через пробел (если не указан, используются плагины чата)",
+    )
 
     llm_parser = subparsers.add_parser(
         "test-llm",
@@ -95,18 +122,27 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    # Parse args early to check for portable mode
+    parser = _build_parser()
+    args = parser.parse_args()
+    
+    # Set portable mode environment variable if flag is set
+    if args.portable:
+        import os
+        os.environ["TELETHON_FANCIFIER_PORTABLE"] = "1"
+    
     log_path = configure_logging()
     load_dotenv()
 
-    parser = _build_parser()
     try:
-        args = parser.parse_args()
-        if args.command in {"setup", "remove-chats", "show-config", "run", "test-llm"}:
+        external_plugins_dir = Path("plugins")
+        
+        if args.command in {"setup", "remove-chats", "show-config", "run", "test-llm", "preview"}:
             store = ConfigStore()
             config = store.load()
 
             registry = build_builtin_registry(config)
-            load_external_plugins(registry, Path("plugins"))
+            load_external_plugins(registry, external_plugins_dir)
 
         if args.command == "setup":
             updated = asyncio.run(run_settings_wizard(config, registry, on_change=store.save))
@@ -157,8 +193,73 @@ def main() -> None:
                 config=config,
                 registry=registry,
                 options=DaemonOptions(dry_run=bool(args.dry_run or config.default_dry_run)),
+                external_plugins_dir=external_plugins_dir,
+                enable_hot_reload=not args.no_hot_reload,
             )
             asyncio.run(daemon.run())
+            return
+
+        if args.command == "preview":
+            source_text = args.text if args.text is not None else input("Введите текст: ").strip()
+            
+            # Determine which plugins to use
+            if args.plugins:
+                plugin_ids = args.plugins
+            elif args.chat_id:
+                # Find chat config
+                chat_config = next((c for c in config.chats if c.chat_id == args.chat_id), None)
+                if chat_config is None:
+                    print(f"Чат {args.chat_id} не найден в конфигурации")
+                    return
+                plugin_ids = chat_config.plugin_order
+            else:
+                # Use all available plugins
+                plugin_ids = registry.all_ids()
+            
+            if not plugin_ids:
+                print("Нет плагинов для применения")
+                return
+            
+            print(f"\n{'='*60}")
+            print("Исходный текст:")
+            print(f"{'='*60}")
+            print(source_text)
+            
+            transformed = source_text
+            for i, plugin_id in enumerate(plugin_ids, 1):
+                try:
+                    plugin = registry.get(plugin_id)
+                    prev_text = transformed
+                    transformed = asyncio.run(
+                        plugin.transform(
+                            transformed,
+                            PluginContext(
+                                chat_id=args.chat_id if args.chat_id else 0,
+                                message_id=0,
+                                dry_run=True,
+                            ),
+                        )
+                    )
+                    
+                    print(f"\n{'='*60}")
+                    print(f"Шаг {i}: {plugin.title} ({plugin_id})")
+                    print(f"{'='*60}")
+                    if transformed != prev_text:
+                        print(transformed)
+                    else:
+                        print("[без изменений]")
+                        
+                except Exception as exc:
+                    print(f"\n{'='*60}")
+                    print(f"Шаг {i}: {plugin_id} - ОШИБКА")
+                    print(f"{'='*60}")
+                    print(f"{exc}")
+                    break
+            
+            print(f"\n{'='*60}")
+            print("Финальный результат:")
+            print(f"{'='*60}")
+            print(transformed)
             return
 
         if args.command == "test-llm":

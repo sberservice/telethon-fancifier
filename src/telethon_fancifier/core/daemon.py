@@ -5,14 +5,20 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC
+from pathlib import Path
 
 from telethon import TelegramClient, events
 
+from telethon_fancifier.config.paths import get_config_path, get_session_dir
 from telethon_fancifier.config.schema import AppConfig
+from telethon_fancifier.config.store import ConfigStore
+from telethon_fancifier.config.watcher import ConfigWatcher
 from telethon_fancifier.core.errors import AppError
 from telethon_fancifier.core.safeguards import can_edit_last_message
 from telethon_fancifier.core.telegram_credentials import read_telegram_credentials
+from telethon_fancifier.plugins import build_builtin_registry
 from telethon_fancifier.plugins.base import PluginContext
+from telethon_fancifier.plugins.loader import load_external_plugins
 from telethon_fancifier.plugins.registry import PluginRegistry
 
 logger = logging.getLogger(__name__)
@@ -24,20 +30,55 @@ class DaemonOptions:
 
 
 class FancifierDaemon:
-    def __init__(self, config: AppConfig, registry: PluginRegistry, options: DaemonOptions) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        registry: PluginRegistry,
+        options: DaemonOptions,
+        external_plugins_dir: Path | None = None,
+        enable_hot_reload: bool = True,
+    ) -> None:
         self._config = config
         self._registry = registry
         self._options = options
+        self._external_plugins_dir = external_plugins_dir
+        self._enable_hot_reload = enable_hot_reload
         self._last_message_by_chat: dict[int, int] = {}
         self._locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._config_store = ConfigStore()
+        self._config_watcher: ConfigWatcher | None = None
+
+        # Setup config watcher if enabled
+        if self._enable_hot_reload:
+            self._config_watcher = ConfigWatcher(get_config_path())
+            self._config_watcher.add_callback(self._reload_config)
 
         credentials = read_telegram_credentials()
+        session_dir = get_session_dir()
+        session_dir.mkdir(parents=True, exist_ok=True)
+        session_path = session_dir / credentials.session_name
 
         self._client = TelegramClient(
-            credentials.session_name,
+            str(session_path),
             credentials.api_id,
             credentials.api_hash,
         )
+
+    def _reload_config(self) -> None:
+        """Reload configuration and rebuild plugin registry."""
+        try:
+            new_config = self._config_store.load()
+            self._config = new_config
+            
+            # Rebuild registry with new config
+            new_registry = build_builtin_registry(new_config)
+            if self._external_plugins_dir is not None:
+                load_external_plugins(new_registry, self._external_plugins_dir)
+            self._registry = new_registry
+            
+            logger.info("Configuration and plugins reloaded successfully")
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to reload configuration, keeping old config")
 
     def _chat_plugins(self, chat_id: int) -> list[str]:
         for chat in self._config.chats:
@@ -46,6 +87,10 @@ class FancifierDaemon:
         return []
 
     async def run(self) -> None:
+        # Start config watcher if enabled
+        if self._config_watcher is not None:
+            await self._config_watcher.start()
+
         @self._client.on(events.NewMessage(outgoing=True))
         async def on_outgoing(event: events.NewMessage.Event) -> None:
             if event.message is None or event.message.id is None or event.chat_id is None:
@@ -124,3 +169,7 @@ class FancifierDaemon:
             raise AppError(
                 "Демон остановлен из-за ошибки Telegram API/сети. Подробности в логе."
             ) from exc
+        finally:
+            # Stop config watcher
+            if self._config_watcher is not None:
+                await self._config_watcher.stop()
