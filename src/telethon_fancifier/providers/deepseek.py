@@ -77,7 +77,7 @@ class DeepSeekProvider:
         system_prompt: str,
         user_prompt: str,
         temperature: float | None,
-    ) -> tuple[str | None, dict | None]:
+    ) -> tuple[str | None, dict[str, object] | None]:
         if api_style == "chat_completions":
             payload: dict[str, object] = {
                 "model": model,
@@ -111,7 +111,7 @@ class DeepSeekProvider:
         return None, None
 
     @staticmethod
-    def _extract_responses_content(data: dict) -> str:
+    def _extract_responses_content(data: dict[str, object]) -> str:
         output_text = data.get("output_text")
         if isinstance(output_text, str):
             return output_text
