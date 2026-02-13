@@ -1,0 +1,30 @@
+name: Windows Portable Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Установка зависимостей
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pyinstaller
+      - name: Сборка
+        run: python scripts/build_windows_portable.py
+      - name: Архив
+        run: powershell Compress-Archive -Path dist/telethon-fancifier/* -DestinationPath dist/telethon-fancifier-windows.zip
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: telethon-fancifier-windows
+          path: dist/telethon-fancifier-windows.zip

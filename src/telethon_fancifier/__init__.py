@@ -1,0 +1,1 @@
+"""Пакет Telethon Fancifier."""
