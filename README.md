@@ -170,6 +170,8 @@ telethon-fancifier build-windows
 
 Быстро обновить проект из GitHub (`origin/main`), обновить `.venv` и переустановить пакет:
 
+Если `origin/main` был переписан (force-push) и локальная ветка разошлась, скрипт автоматически создаст backup-ветку (`backup/<branch>-before-reset-<timestamp>`) и синхронизирует локальный `main` с `origin/main`.
+
 ```powershell
 .\scripts\windows_quick_update.ps1
 ```

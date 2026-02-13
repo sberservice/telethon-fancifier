@@ -18,6 +18,23 @@ function Step([string]$Message) {
     Write-Host "STEP: $Message" -ForegroundColor Cyan
 }
 
+function Get-DivergenceCounts([string]$LocalRef, [string]$RemoteRef) {
+    $raw = git rev-list --left-right --count "$LocalRef...$RemoteRef" 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $raw) {
+        return $null
+    }
+
+    $parts = ($raw -split "\s+") | Where-Object { $_ -ne "" }
+    if ($parts.Count -lt 2) {
+        return $null
+    }
+
+    return @{
+        Ahead = [int]$parts[0]
+        Behind = [int]$parts[1]
+    }
+}
+
 if (-not $RepoDir) {
     $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
     $RepoDir = Resolve-Path (Join-Path $scriptDir "..")
@@ -58,7 +75,31 @@ else {
     if ($LASTEXITCODE -ne 0) { Fail "git checkout failed for branch: $Branch" }
 
     git pull --ff-only origin $Branch
-    if ($LASTEXITCODE -ne 0) { Fail "git pull failed for branch: $Branch" }
+    if ($LASTEXITCODE -ne 0) {
+        $divergence = Get-DivergenceCounts "HEAD" "origin/$Branch"
+        if ($null -ne $divergence -and $divergence.Ahead -gt 0 -and $divergence.Behind -gt 0) {
+            Step "Detected diverged history (ahead=$($divergence.Ahead), behind=$($divergence.Behind))"
+
+            $trackedChanges = git status --porcelain --untracked-files=no
+            if ($LASTEXITCODE -ne 0) { Fail "git status failed while checking local changes" }
+            if ($trackedChanges) {
+                Fail "branch diverged and tracked local changes exist; commit/stash changes or rerun with -ForceUpdate"
+            }
+
+            $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+            $backupBranch = "backup/$Branch-before-reset-$timestamp"
+            Step "Creating backup branch '$backupBranch' from current HEAD"
+            git branch $backupBranch HEAD
+            if ($LASTEXITCODE -ne 0) { Fail "failed to create backup branch: $backupBranch" }
+
+            Step "Resetting local '$Branch' to origin/$Branch"
+            git reset --hard "origin/$Branch"
+            if ($LASTEXITCODE -ne 0) { Fail "git reset --hard failed for origin/$Branch" }
+        }
+        else {
+            Fail "git pull failed for branch: $Branch"
+        }
+    }
 }
 
 $venvPython = Join-Path $RepoDir ".venv\Scripts\python.exe"
