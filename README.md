@@ -42,6 +42,12 @@ pip install -e .
 telethon-fancifier setup
 ```
 
+Если console-script ещё не доступен в PATH (например, не активировано venv), можно запускать через Python:
+
+```bash
+python start.py setup
+```
+
 Команда запускает мастер настройки с действиями:
 
 - добавить/изменить чаты и порядок модулей;
@@ -60,6 +66,12 @@ telethon-fancifier setup
 
 ```bash
 telethon-fancifier run
+```
+
+Альтернатива через Python:
+
+```bash
+python start.py run
 ```
 
 ### 3) Безопасная проверка без реальных изменений
