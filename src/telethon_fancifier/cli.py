@@ -171,6 +171,8 @@ def main() -> None:
                     config.llm,
                 )
             )
+            print("\nLLM запрос:")
+            print(source_text)
             print("\nLLM ответ:")
             print(result)
             return

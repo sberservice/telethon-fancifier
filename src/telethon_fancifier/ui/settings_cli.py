@@ -304,6 +304,8 @@ async def run_llm_test_wizard(config: AppConfig) -> AppConfig:
             provider=None,
             llm_config=config.llm,
         )
+        print("\nLLM запрос:")
+        print(source_text)
         print("\nLLM ответ:")
         print(result)
 

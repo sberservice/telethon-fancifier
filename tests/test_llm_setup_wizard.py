@@ -35,6 +35,8 @@ async def test_run_llm_test_wizard_prints_model_reply(monkeypatch: pytest.Monkey
 
     assert updated is config
     captured = capsys.readouterr().out
+    assert "LLM запрос:" in captured
+    assert "Привет, тест" in captured
     assert "LLM ответ:" in captured
     assert "echo:Привет, тест" in captured
 

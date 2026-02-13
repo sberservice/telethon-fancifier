@@ -17,13 +17,17 @@ class DeepSeekProvider:
         self._model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 
     async def rewrite(self, request: LlmRequest) -> str:
+        user_prompt = self._format_user_prompt(request.user_prompt_template, request.text)
+
         if not self._api_key:
+            logger.info("[llm] query: %s", user_prompt)
+            logger.info("[llm] result: %s", request.text)
             logger.info("DEEPSEEK_API_KEY не задан, llm_rewrite вернул исходный текст")
             return request.text
 
         model = request.model or self._model
         api_style = request.api_style or "chat_completions"
-        user_prompt = self._format_user_prompt(request.user_prompt_template, request.text)
+        logger.info("[llm] query: %s", user_prompt)
 
         headers = {"Authorization": f"Bearer {self._api_key}"}
         endpoint, payload = self._build_payload(
@@ -35,6 +39,7 @@ class DeepSeekProvider:
         )
         if endpoint is None or payload is None:
             logger.error("Неподдерживаемый API-стиль для модели: %s", api_style)
+            logger.info("[llm] result: %s", request.text)
             return request.text
 
         try:
@@ -50,9 +55,12 @@ class DeepSeekProvider:
                     content = self._extract_responses_content(data)
                 else:
                     content = data["choices"][0]["message"]["content"]
-                return str(content).strip()
+                rewritten = str(content).strip()
+                logger.info("[llm] result: %s", rewritten)
+                return rewritten
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError):
             logger.exception("Ошибка запроса к DeepSeek, возвращен исходный текст")
+            logger.info("[llm] result: %s", request.text)
             return request.text
 
     @staticmethod
