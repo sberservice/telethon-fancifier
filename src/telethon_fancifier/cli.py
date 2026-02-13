@@ -101,11 +101,11 @@ def main() -> None:
     parser = _build_parser()
     try:
         args = parser.parse_args()
-        if args.command in {"setup", "remove-chats", "show-config", "run"}:
+        if args.command in {"setup", "remove-chats", "show-config", "run", "test-llm"}:
             store = ConfigStore()
             config = store.load()
 
-            registry = build_builtin_registry()
+            registry = build_builtin_registry(config)
             load_external_plugins(registry, Path("plugins"))
 
         if args.command == "setup":
@@ -125,6 +125,20 @@ def main() -> None:
                 "schema_version": config.schema_version,
                 "parse_mode": config.parse_mode,
                 "default_dry_run": config.default_dry_run,
+                "llm": {
+                    "provider": config.llm.provider,
+                    "model": config.llm.model,
+                    "api_style": config.llm.api_style,
+                    "active_prompt": config.llm.active_prompt,
+                    "prompts": {
+                        name: {
+                            "system_prompt": prompt.system_prompt,
+                            "user_prompt_template": prompt.user_prompt_template,
+                            "temperature": prompt.temperature,
+                        }
+                        for name, prompt in config.llm.prompts.items()
+                    },
+                },
                 "chats": [
                     {
                         "chat_id": c.chat_id,
@@ -149,7 +163,14 @@ def main() -> None:
 
         if args.command == "test-llm":
             source_text = args.text if args.text is not None else input("Введите текст для LLM: ").strip()
-            result = asyncio.run(preview_llm_response(source_text, chat_id=args.chat_id))
+            result = asyncio.run(
+                preview_llm_response(
+                    source_text,
+                    args.chat_id,
+                    None,
+                    config.llm,
+                )
+            )
             print("\nLLM ответ:")
             print(result)
             return

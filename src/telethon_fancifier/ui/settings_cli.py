@@ -4,7 +4,8 @@ import logging
 
 from telethon import TelegramClient
 
-from telethon_fancifier.config.schema import AppConfig, ChatConfig
+from telethon_fancifier.config.schema import AppConfig, ChatConfig, LlmPromptConfig
+from telethon_fancifier.core.llm_tools import preview_llm_response
 from telethon_fancifier.core.errors import AppError
 from telethon_fancifier.core.telegram_credentials import read_telegram_credentials
 from telethon_fancifier.plugins.registry import PluginRegistry
@@ -79,14 +80,158 @@ def _print_config_summary(config: AppConfig) -> None:
     print("\nТекущие настройки:")
     if not config.chats:
         print("- Чаты не настроены")
-        print()
-        return
+    else:
+        for chat in config.chats:
+            modules = ", ".join(chat.plugin_order) if chat.plugin_order else "не выбраны"
+            print(f"- {chat.title} ({chat.chat_id})")
+            print(f"  Модули: {modules}")
 
-    for chat in config.chats:
-        modules = ", ".join(chat.plugin_order) if chat.plugin_order else "не выбраны"
-        print(f"- {chat.title} ({chat.chat_id})")
-        print(f"  Модули: {modules}")
+    active_prompt = config.llm.prompts.get(config.llm.active_prompt)
+    if active_prompt is None:
+        active_prompt = config.llm.get_active_prompt()
+    print("- LLM:")
+    print(f"  Provider: {config.llm.provider}")
+    print(f"  Model: {config.llm.model}")
+    print(f"  API: {config.llm.api_style}")
+    print(f"  Active prompt: {config.llm.active_prompt}")
+    print(f"  Temperature: {active_prompt.temperature}")
     print()
+
+
+def _read_temperature(raw_value: str, *, fallback: float) -> float:
+    raw = raw_value.strip()
+    if not raw:
+        return fallback
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise AppError("Температура должна быть числом (например 0, 0.2, 1.0).") from exc
+
+    if value < 0 or value > 2:
+        raise AppError("Температура должна быть в диапазоне 0..2.")
+    return value
+
+
+def _print_llm_prompts(config: AppConfig) -> None:
+    print("\nLLM prompt-профили:")
+    for idx, (name, prompt) in enumerate(config.llm.prompts.items(), start=1):
+        marker = "*" if name == config.llm.active_prompt else " "
+        print(f"  {idx}. [{marker}] {name} | temperature={prompt.temperature}")
+
+
+def run_llm_settings_wizard(config: AppConfig) -> AppConfig:
+    config.llm.get_active_prompt()
+
+    while True:
+        print("\n=== Настройки LLM ===")
+        print("1. Показать prompt-профили")
+        print("2. Выбрать активный prompt")
+        print("3. Создать/изменить prompt")
+        print("4. Удалить prompt")
+        print("5. Изменить модель")
+        print("6. Изменить API-стиль модели")
+        print("0. Назад")
+
+        action = input("Выберите действие: ").strip()
+        if action == "1":
+            _print_llm_prompts(config)
+            continue
+
+        if action == "2":
+            _print_llm_prompts(config)
+            prompt_name = input("Введите имя prompt-профиля: ").strip()
+            if prompt_name not in config.llm.prompts:
+                raise AppError(f"Prompt-профиль '{prompt_name}' не найден.")
+            config.llm.active_prompt = prompt_name
+            print(f"Активный prompt: {prompt_name}")
+            continue
+
+        if action == "3":
+            prompt_name = input("Имя prompt-профиля: ").strip()
+            if not prompt_name:
+                raise AppError("Имя prompt-профиля не может быть пустым.")
+
+            existing = config.llm.prompts.get(prompt_name)
+            current_system = existing.system_prompt if existing is not None else ""
+            current_user_template = (
+                existing.user_prompt_template if existing is not None else "{text}"
+            )
+            current_temp = existing.temperature if existing is not None else 0.0
+
+            system_prompt = input(
+                "System prompt (пусто = оставить текущее значение): "
+            ).strip()
+            user_template = input(
+                "User prompt template (используйте {text}, пусто = оставить текущее): "
+            ).strip()
+            temperature_raw = input(
+                "Temperature 0..2 (пусто = оставить текущее): "
+            )
+
+            config.llm.prompts[prompt_name] = LlmPromptConfig(
+                system_prompt=system_prompt if system_prompt else current_system,
+                user_prompt_template=user_template if user_template else current_user_template,
+                temperature=_read_temperature(temperature_raw, fallback=current_temp),
+            )
+
+            if config.llm.active_prompt not in config.llm.prompts:
+                config.llm.active_prompt = prompt_name
+
+            print(f"Prompt-профиль '{prompt_name}' сохранён.")
+            continue
+
+        if action == "4":
+            _print_llm_prompts(config)
+            prompt_name = input("Введите имя prompt-профиля для удаления: ").strip()
+            if prompt_name not in config.llm.prompts:
+                raise AppError(f"Prompt-профиль '{prompt_name}' не найден.")
+            if len(config.llm.prompts) == 1:
+                raise AppError("Нельзя удалить единственный prompt-профиль.")
+
+            del config.llm.prompts[prompt_name]
+            if config.llm.active_prompt == prompt_name:
+                config.llm.active_prompt = next(iter(config.llm.prompts.keys()))
+            print(f"Prompt-профиль '{prompt_name}' удалён.")
+            continue
+
+        if action == "5":
+            model = input("Модель (например deepseek-chat): ").strip()
+            if not model:
+                raise AppError("Имя модели не может быть пустым.")
+            config.llm.model = model
+            continue
+
+        if action == "6":
+            api_style = input("API-стиль (chat_completions или responses): ").strip()
+            if api_style not in {"chat_completions", "responses"}:
+                raise AppError("Доступные варианты API-стиля: chat_completions, responses.")
+            config.llm.api_style = api_style
+            continue
+
+        if action == "0":
+            return config
+
+        raise AppError("Неизвестное действие. Используйте 0, 1, 2, 3, 4, 5 или 6.")
+
+
+async def run_llm_test_wizard(config: AppConfig) -> AppConfig:
+    print("\n=== Тест LLM ===")
+    print("Введите текст и получите ответ модели.")
+    print("Пустой ввод = назад в мастер настройки.")
+
+    while True:
+        source_text = input("Текст для LLM: ").strip()
+        if not source_text:
+            return config
+
+        result = await preview_llm_response(
+            source_text,
+            chat_id=0,
+            provider=None,
+            llm_config=config.llm,
+        )
+        print("\nLLM ответ:")
+        print(result)
 
 
 async def _run_add_or_edit_chats_wizard(config: AppConfig, registry: PluginRegistry) -> AppConfig:
@@ -155,6 +300,8 @@ async def run_settings_wizard(config: AppConfig, registry: PluginRegistry) -> Ap
         print("1. Добавить/изменить чаты и модули")
         print("2. Удалить чаты из конфига")
         print("3. Показать текущие настройки")
+        print("4. Настроить LLM prompts/model/temperature")
+        print("5. Тест LLM (ввести текст и получить ответ)")
         print("0. Завершить setup")
 
         action = input("Выберите действие: ").strip()
@@ -167,10 +314,16 @@ async def run_settings_wizard(config: AppConfig, registry: PluginRegistry) -> Ap
         if action == "3":
             _print_config_summary(config)
             continue
+        if action == "4":
+            config = run_llm_settings_wizard(config)
+            continue
+        if action == "5":
+            config = await run_llm_test_wizard(config)
+            continue
         if action == "0":
             return config
 
-        raise AppError("Неизвестное действие мастера. Используйте 0, 1, 2 или 3.")
+        raise AppError("Неизвестное действие мастера. Используйте 0, 1, 2, 3, 4 или 5.")
 
 
 def run_remove_chats_wizard(config: AppConfig) -> AppConfig:

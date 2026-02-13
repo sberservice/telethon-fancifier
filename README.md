@@ -47,6 +47,14 @@ telethon-fancifier setup
 - добавить/изменить чаты и порядок модулей;
 - удалить чаты из локального конфига;
 - просмотреть текущие настройки.
+- настроить LLM: модель, API-стиль (`chat_completions`/`responses`), prompt-профили и `temperature`.
+- интерактивно тестировать LLM (ввести текст и сразу увидеть ответ).
+
+Для prompt-профиля доступны:
+
+- `system_prompt`;
+- `user_prompt_template` (используйте placeholder `{text}`);
+- отдельная `temperature` для каждого prompt-профиля.
 
 ### 2) Запуск демона
 

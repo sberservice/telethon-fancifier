@@ -8,6 +8,11 @@ from typing import Protocol
 class LlmRequest:
     text: str
     chat_id: int
+    system_prompt: str = ""
+    user_prompt_template: str = "{text}"
+    temperature: float | None = None
+    model: str = ""
+    api_style: str = "chat_completions"
 
 
 class BaseLlmProvider(Protocol):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from telethon_fancifier.config.schema import LlmConfig
 from telethon_fancifier.core.errors import AppError
 from telethon_fancifier.plugins.base import PluginContext
 from telethon_fancifier.plugins.llm_rewrite import LlmRewritePlugin
@@ -11,6 +12,7 @@ async def preview_llm_response(
     text: str,
     chat_id: int = 0,
     provider: BaseLlmProvider | None = None,
+    llm_config: LlmConfig | None = None,
 ) -> str:
     """Возвращает ответ LLM-модуля для текста без запуска Telegram-демона."""
     cleaned = text.strip()
@@ -18,7 +20,7 @@ async def preview_llm_response(
         raise AppError("Текст для LLM-теста пустой. Передайте --text или введите текст в интерактивном режиме.")
 
     active_provider: BaseLlmProvider = provider if provider is not None else DeepSeekProvider()
-    plugin = LlmRewritePlugin(active_provider)
+    plugin = LlmRewritePlugin(active_provider, llm_config=llm_config)
     return await plugin.transform(
         cleaned,
         PluginContext(chat_id=chat_id, message_id=0, dry_run=True),
