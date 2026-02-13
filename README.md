@@ -45,7 +45,7 @@ telethon-fancifier setup
 Если console-script ещё не доступен в PATH (например, не активировано venv), можно запускать через Python:
 
 ```bash
-python start.py setup
+python3.12 start.py setup
 ```
 
 Команда запускает мастер настройки с действиями:
@@ -71,7 +71,7 @@ telethon-fancifier run
 Альтернатива через Python:
 
 ```bash
-python start.py run
+python3.12 start.py run
 ```
 
 ### 3) Безопасная проверка без реальных изменений
